@@ -147,6 +147,8 @@ try:
                 "enabled": True,
                 "base_url": f"http://127.0.0.1:{server.server_port}/v1/",
                 "model": "local-test-model",
+                "candidates": 3,
+                "context_chars": 256,
             }
             if case == "partial-config":
                 settings.update(api_key="global-key-must-be-cleared", candidates=1,
@@ -162,6 +164,8 @@ try:
                 "enabled": case not in {"disabled", "menu-on"},
                 "base_url": f"http://127.0.0.1:{server.server_port}/v1/",
                 "model": "local-test-model",
+                "candidates": 3,
+                "context_chars": 256,
             }
             if case == "api-auth":
                 settings["api_key"] = "local-test-key"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace rome {
@@ -16,8 +17,9 @@ struct Settings {
     int contextCharacters = 256;
 };
 
-// 读取 Fcitx5 数据目录中的全局默认配置，再应用可选用户配置的字段覆盖。
-Settings loadSettings(const std::filesystem::path &path);
+// 平台负责定位路径。默认配置必须存在，用户配置可缺省或不存在。
+Settings loadSettings(const std::filesystem::path &defaults,
+                      const std::optional<std::filesystem::path> &overrides = std::nullopt);
 // 校验合并后的 API 配置。错误由插件边界转成禁用状态，不影响输入。
 void validateSettings(const Settings &settings);
 

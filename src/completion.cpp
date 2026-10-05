@@ -1,4 +1,5 @@
 #include "completion.h"
+#include "unicode.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +10,6 @@
 
 #include <curl/curl.h>
 #include <json/json.h>
-#include <fcitx-utils/utf8.h>
 
 namespace rome {
 namespace {
@@ -114,8 +114,9 @@ std::vector<std::string> parseResponse(const std::string &body, int maximum) {
     std::unordered_set<std::string> seen;
     for (auto &token : ranked) {
         auto &text = token.text;
+        const auto boundaries = detail::unicodeBoundaries(text);
         if (text.empty() || text.find_first_not_of(' ') == std::string::npos ||
-            !fcitx::utf8::validate(text) || fcitx::utf8::length(text) > 128 ||
+            !boundaries || boundaries->size() - 1 > 128 ||
             std::any_of(text.begin(), text.end(), [](unsigned char c) { return c < 32 || c == 127; })) {
             continue;
         }
@@ -206,13 +207,12 @@ std::vector<std::string> complete(const Settings &s, const std::string &prefix,
 }
 } // namespace
 
-CompletionClient::CompletionClient(fcitx::EventLoop &loop,
+CompletionClient::CompletionClient(Dispatch dispatch,
                                    std::function<void(PredictionResult)> callback)
-    : callback_(std::move(callback)) {
+    : dispatch_(std::move(dispatch)), callback_(std::move(callback)) {
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         throw std::runtime_error("could not initialize libcurl");
     }
-    dispatcher_.attach(&loop);
     worker_ = std::jthread([this](std::stop_token stop) { run(stop); });
 }
 
@@ -220,10 +220,11 @@ CompletionClient::~CompletionClient() {
     {
         std::lock_guard lock(mutex_);
         worker_.request_stop();
+        if (active_) active_->store(true);
+        if (pending_) pending_->cancelled->store(true);
     }
     ready_.notify_one();
     worker_.join();
-    dispatcher_.detach();
     curl_global_cleanup();
 }
 
@@ -257,8 +258,9 @@ void CompletionClient::run(std::stop_token stop) {
             result.value = std::string(error.what());
         }
         if (stop.stop_requested()) return;
-        dispatcher_.schedule([this, token = request.cancelled, result = std::move(result)]() mutable {
-            if (!token->load()) callback_(std::move(result));
+        dispatch_([callback = callback_, token = request.cancelled,
+                   result = std::move(result)]() mutable {
+            if (!token->load()) callback(std::move(result));
         });
     }
 }

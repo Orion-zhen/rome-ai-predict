@@ -8,7 +8,7 @@ Linux / Fcitx5 的 AI 下一 token 预测扩展。Rime 上屏后读取应用提�
 
 - 构建：支持 C++20 的编译器、CMake、pkg-config、Ninja 或其他 CMake 构建工具。
 - 功能依赖：Fcitx5、Fcitx5-Rime、libcurl、jsoncpp、yaml-cpp。构建时需要相应开发文件。
-- 测试依赖：Python、librime 开发文件，仅在启用测试时需要。
+- 测试依赖：Python。启用 Fcitx5 集成测试时还需要 librime 开发文件。
 
 在项目根目录执行：
 
@@ -113,6 +113,29 @@ model: "你的服务端模型名"
 
 **token 不等于字或词**，候选可能是单字、子词或多个字符。
 
+## 共享后端
+
+`rome-ai-backend` 是不依赖 Fcitx5 或 librime 的静态库，包含配置合并与校验、异步 Completions 客户端、UTF-8 校验和上下文快照。Linux 默认构建 Fcitx5 插件，其他平台默认只构建共享后端。目前尚未实现 Squirrel 插件、Accessibility 文本读取或 `_refresh_ui` 接入。
+
+只构建共享后端并运行独立测试：
+
+```sh
+cmake -S . -B build-shared -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_FCITX5=OFF -DBUILD_TESTING=ON
+cmake --build build-shared
+ctest --test-dir build-shared --output-on-failure --parallel 4
+```
+
+此模式需要支持 C++20 `std::jthread` 的工具链、libcurl、jsoncpp、yaml-cpp 和 Python，不需要输入法依赖。共享后端不单独安装。上述测试可在 Linux 运行，不代表已经验证 macOS 工具链或应用兼容性。
+
+共享接口的职责：
+
+- `loadSettings(defaults, overrides)`：读取调用方定位的配置文件，不探测平台路径。默认配置必须存在，用户覆盖可省略。
+- `CompletionClient(dispatch, callback)`：后台线程请求 API，通过调用方提供的调度函数投递结果。调度函数必须将任务排入宿主事件循环，不得内联执行。提交、析构和结果回调在同一个宿主事件线程执行，调度器必须存活至客户端析构完成。客户端取消、替换请求或析构后，已排队任务不调用结果回调。
+- `SurroundingSnapshot::fromUtf8(text, cursor, anchor, unit)`：校验文本和选区，并把码点或 UTF-16 偏移统一为码点。偏移必须相对于传入的文本窗口，UTF-16 偏移不得落在代理对中间。`prefix()` 按码点截取前文，`afterCommit()` 计算替换选区后的预期快照。快照比较包含文字、光标和选区。
+
+`afterCommit()` 的计算结果不是应用接收提交的证据。前端仍需确认上屏后的实际文本，并检查焦点、控件身份、预编辑状态和敏感输入。共享后端不读取应用文本，也不使用上屏历史补齐缺失的前文。
+
 ## 开发测试
 
 ```sh
@@ -122,7 +145,9 @@ cmake --build build-test
 ctest --test-dir build-test --output-on-failure --parallel 4
 ```
 
-诊断工具 `rome-ai-probe` 仅在启用测试时构建，不安装。测试使用临时 HOME/XDG、真实系统 Fcitx5-Rime、隔离码表和本地 HTTP 服务器。不会访问模型服务、连接桌面会话、重启现有输入法或安装到真实用户和系统目录。
+共享测试覆盖配置、UTF-8/UTF-16 偏移、选区替换、提交确认用的快照比较、API 协议、候选过滤，以及请求取消、替换和析构后的回调失效。
+
+启用 `BUILD_FCITX5` 后，还会构建诊断工具 `rome-ai-probe` 和集成测试，不安装诊断工具。集成测试使用临时 HOME/XDG、真实系统 Fcitx5-Rime、隔离码表和本地 HTTP 服务器。所有测试均不访问模型服务、不连接桌面会话、不重启现有输入法、不安装到真实用户和系统目录。
 
 覆盖全局配置、可选用户覆盖、联想生命周期、菜单、API 协议、认证、超时、无效响应、Unicode、候选过滤及真实键码。安装测试验证仅安装三个文件、独立构建、用户安装、`--prefix`、`DESTDIR`、自定义 XDG 数据目录、系统库名加载、不覆盖用户配置，以及移走源码和构建目录后加载插件。
 

@@ -1,8 +1,27 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+add_executable(test-shared shared.cpp)
+target_link_libraries(test-shared PRIVATE rome-ai-backend)
+target_compile_options(test-shared PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME shared-surrounding COMMAND test-shared surrounding)
+add_test(NAME shared-settings COMMAND test-shared settings "${CMAKE_CURRENT_BINARY_DIR}")
+foreach(case llama standard auth bytes dedup filter utf8 length special first-position empty
+             json duplicate-key trailing-json shape score invalid-bytes missing-bytes
+             http-error redirect big timeout queued-cancel queued-replaced queued-destroyed
+             active-cancel active-replaced active-shutdown)
+    add_test(NAME shared-${case}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/shared.py
+            $<TARGET_FILE:test-shared> ${case})
+    set_tests_properties(shared-${case} PROPERTIES TIMEOUT 15)
+endforeach()
+
+if(NOT BUILD_FCITX5)
+    return()
+endif()
 pkg_check_modules(RIME REQUIRED IMPORTED_TARGET rime)
 # 诊断工具仅供开发测试，不安装。
 add_executable(rome-ai-probe ${PROJECT_SOURCE_DIR}/src/probe.cpp)
-target_link_libraries(rome-ai-probe PRIVATE rome-ai-backend)
+target_link_libraries(rome-ai-probe PRIVATE rome-ai-backend Fcitx5::Utils)
 target_compile_options(rome-ai-probe PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(test-integration integration.cpp)

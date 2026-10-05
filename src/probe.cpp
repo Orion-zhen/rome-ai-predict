@@ -5,6 +5,8 @@
 #include <iostream>
 #include <string>
 #include <fcitx-utils/event.h>
+#include <fcitx-utils/eventdispatcher.h>
+#include <fcitx-utils/standardpaths.h>
 #include <json/json.h>
 
 int main(int argc, char **argv) {
@@ -13,12 +15,18 @@ int main(int argc, char **argv) {
         return 2;
     }
     try {
-        auto settings = rome::loadSettings(argv[1]);
+        const auto defaults = fcitx::StandardPaths::global().locate(
+            fcitx::StandardPathsType::PkgData, "conf/rome-ai-predict.yaml");
+        auto settings = rome::loadSettings(defaults, std::filesystem::path(argv[1]));
         rome::validateSettings(settings);
         fcitx::EventLoop loop;
         int exitCode = 0;
         const auto started = std::chrono::steady_clock::now();
-        rome::CompletionClient client(loop, [&](rome::PredictionResult result) {
+        fcitx::EventDispatcher dispatcher;
+        dispatcher.attach(&loop);
+        rome::CompletionClient client(
+            [&](rome::CompletionClient::Task task) { dispatcher.schedule(std::move(task)); },
+            [&](rome::PredictionResult result) {
             if (auto *error = std::get_if<std::string>(&result.value)) {
                 std::cerr << *error << '\n';
                 exitCode = 1;

@@ -1,5 +1,6 @@
 #include "completion.h"
 #include "settings.h"
+#include "surrounding.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include <fcitx-utils/event.h>
+#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/utf8.h>
 #include <fcitx-utils/standardpaths.h>
@@ -30,37 +32,13 @@ using namespace fcitx;
 
 constexpr uint64_t kSurroundingTimeoutUs = 1'000'000;
 
-// Fcitx surrounding text 的偏移单位是 Unicode 码点，不是 UTF-8 字节。
-struct Snapshot {
-    std::string text;
-    unsigned int cursor;
-    unsigned int anchor;
-    bool operator==(const Snapshot &) const = default;
-
-    static std::optional<Snapshot> read(InputContext *ic) {
-        const auto &s = ic->surroundingText();
-        if (!s.isValid()) {
-            return std::nullopt;
-        }
-        return Snapshot{s.text(), s.cursor(), s.anchor()};
-    }
-
-    Snapshot afterCommit(const std::string &commit) const {
-        const auto begin = std::min(cursor, anchor);
-        const auto end = std::max(cursor, anchor);
-        const auto first = utf8::ncharByteLength(text.begin(), begin);
-        const auto last = utf8::ncharByteLength(text.begin(), end);
-        const auto position = begin + static_cast<unsigned int>(utf8::length(commit));
-        return {text.substr(0, first) + commit + text.substr(last), position, position};
-    }
-
-    std::string prefix(unsigned int maximum) const {
-        const auto start = cursor > maximum ? cursor - maximum : 0;
-        const auto first = utf8::ncharByteLength(text.begin(), start);
-        const auto last = utf8::ncharByteLength(text.begin(), cursor);
-        return text.substr(first, last - first);
-    }
-};
+// 焦点和敏感输入检查属于前端。共享快照只校验文本编码和偏移。
+std::optional<SurroundingSnapshot> readSnapshot(InputContext *ic) {
+    const auto &s = ic->surroundingText();
+    if (!s.isValid()) return std::nullopt;
+    return SurroundingSnapshot::fromUtf8(s.text(), s.cursor(), s.anchor(),
+                                        OffsetUnit::CodePoints);
+}
 
 class PhraseCandidate final : public CandidateWord {
 public:
@@ -82,6 +60,7 @@ private:
 class PredictAddon final : public AddonInstance {
 public:
     explicit PredictAddon(Instance *instance) : instance_(instance) {
+        dispatcher_.attach(&instance_->eventLoop());
         timer_ = instance_->eventLoop().addTimeEvent(
             CLOCK_MONOTONIC, 0, 0, [this](EventSourceTime *, uint64_t) {
                 timer_->setEnabled(false);
@@ -158,6 +137,7 @@ public:
     ~PredictAddon() override {
         cancel("unload");
         client_.reset();
+        dispatcher_.detach();
         instance_->userInterfaceManager().unregisterAction(&toggle_);
     }
 
@@ -172,8 +152,8 @@ private:
     struct Session {
         TrackableObjectReference<InputContext> ic;
         uint64_t generation;
-        Snapshot before;
-        Snapshot expected;
+        SurroundingSnapshot before;
+        SurroundingSnapshot expected;
         Stage stage;
         std::weak_ptr<CandidateList> candidates;
         Cancellation request;
@@ -201,7 +181,9 @@ private:
     bool readConfiguration(bool activate) {
         configured_ = false;
         try {
-            settings_ = loadSettings(configPath_);
+            const auto defaults = StandardPaths::global().locate(
+                StandardPathsType::PkgData, "conf/rome-ai-predict.yaml");
+            settings_ = loadSettings(defaults, configPath_);
             validateSettings(settings_);
             configured_ = true;
         } catch (const std::exception &) {
@@ -211,7 +193,8 @@ private:
         }
         if (!(activate || settings_.enabled)) return false;
         if (!client_) {
-            client_ = std::make_unique<CompletionClient>(instance_->eventLoop(),
+            client_ = std::make_unique<CompletionClient>(
+                [this](CompletionClient::Task task) { dispatcher_.schedule(std::move(task)); },
                 [this](PredictionResult result) { onResult(std::move(result)); });
         }
         return true;
@@ -304,7 +287,7 @@ private:
             return;
         }
         cancel("new-commit");
-        const auto before = Snapshot::read(ic);
+        const auto before = readSnapshot(ic);
         if (!before) {
             FCITX_INFO() << "rome-ai-predict: skip (surrounding text unavailable)";
             return;
@@ -320,7 +303,7 @@ private:
         if (!owns(ic)) {
             return;
         }
-        const auto snapshot = Snapshot::read(ic);
+        const auto snapshot = readSnapshot(ic);
         if (!snapshot || !eligible(ic)) {
             cancel("surrounding-unavailable");
             return;
@@ -343,7 +326,7 @@ private:
 
     bool current(InputContext *ic, uint64_t generation) const {
         return owns(ic) && session_->generation == generation && eligible(ic) &&
-               Snapshot::read(ic) == session_->expected;
+               readSnapshot(ic) == session_->expected;
     }
 
     void show(const std::vector<std::string> &phrases) {
@@ -435,6 +418,7 @@ private:
     bool enabled_ = false;
     bool configured_ = false;
     SimpleAction toggle_;
+    EventDispatcher dispatcher_;
     std::unique_ptr<CompletionClient> client_;
     uint64_t generation_ = 0;
     std::optional<Session> session_;

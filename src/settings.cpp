@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
-#include <fcitx-utils/standardpaths.h>
 #include <yaml-cpp/yaml.h>
 
 namespace rome {
@@ -35,13 +34,12 @@ void apply(Settings &s, const YAML::Node &node) {
 }
 }
 
-Settings loadSettings(const std::filesystem::path &path) {
+Settings loadSettings(const std::filesystem::path &defaults,
+                      const std::optional<std::filesystem::path> &overrides) {
     Settings s;
-    const auto defaults = fcitx::StandardPaths::global().locate(
-        fcitx::StandardPathsType::PkgData, "conf/rome-ai-predict.yaml");
     apply(s, YAML::LoadFile(defaults.string()));
-    if (std::filesystem::exists(path)) {
-        apply(s, YAML::LoadFile(path.string()));
+    if (overrides && std::filesystem::exists(*overrides)) {
+        apply(s, YAML::LoadFile(overrides->string()));
     }
     while (s.baseUrl.ends_with('/')) s.baseUrl.pop_back();
     return s;
