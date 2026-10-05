@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="install-test-", dir=work) as directory:
     probe = root / "rome-ai-probe"
     shutil.copy2(Path(work) / "tests/rome-ai-probe", probe)
     shutil.copy2(Path(work) / "tests/test-integration", binary)
-    shutil.copy2(standalone / "tests/run.py", runner)
+    shutil.copy2(standalone / "tests/fcitx5/run.py", runner)
     standalone.rename(root / "removed-source")
     build.rename(root / "removed-build")
     empty_addons = root / "empty-addons"

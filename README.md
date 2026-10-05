@@ -1,8 +1,29 @@
 # rome-ai-predict
 
-Linux / Fcitx5 的 AI 下一 token 预测扩展。Rime 上屏后读取应用提供的光标前文，异步请求支持 `logprobs` 的 Completions API，按概率展示下一个位置的候选。
+Rime 的 AI 下一 token 预测扩展。Linux 使用 Fcitx5 插件，macOS 提供不修改 Squirrel 前端的 librime 扩展。Rime 上屏后读取应用提供的光标前文，异步请求支持 `logprobs` 的 Completions API，按概率展示下一个位置的候选。macOS 适配层尚未在 macOS 编译或实机验证，构建和使用条件见下文。
 
-## 依赖与构建
+## 目录结构
+
+```text
+src/
+  shared/       # 配置、API 客户端、Unicode、上下文快照
+  fcitx5/       # Linux / Fcitx5 插件
+  rime/         # librime 组件、模块注册、宿主接口
+  squirrel/     # macOS / Squirrel 的 AX 适配实现
+tests/
+  shared/       # 共享后端测试
+  fcitx5/       # Fcitx5 集成测试和安装测试
+  rime/         # 真实 librime 与模拟文本控件的隔离测试
+tools/          # 开发诊断工具 probe.cpp
+data/
+  fcitx5/       # Fcitx5 描述文件模板
+  rome-ai-predict.yaml  # 两个平台共用的默认配置
+cmake/          # librime 构建配置和 Fcitx5 安装脚本模板
+```
+
+根目录保留项目构建入口、README、许可证和 `PKGBUILD`。`src/rime/squirrel_host.h` 定义宿主接口，macOS 实现位于 `src/squirrel/squirrel_host.mm`，librime 隔离测试使用模拟实现。
+
+## Linux / Fcitx5：依赖与构建
 
 本软件和依赖统一使用最新版本，不锁定包版本。
 
@@ -113,9 +134,90 @@ model: "你的服务端模型名"
 
 **token 不等于字或词**，候选可能是单字、子词或多个字符。
 
+## macOS / Squirrel：实验性扩展
+
+本扩展使用 Squirrel 已合并的 `_refresh_ui` 协议。需要包含该协议的最新 Squirrel、支持 C++20 `std::jthread` 的工具链、CMake、pkg-config、Boost、libcurl、jsoncpp 和 yaml-cpp。插件使用 librime 的 C++ 内部接口，必须与 Squirrel 内嵌 librime 的源码、生成头文件、架构和 C++/Boost 环境匹配，不要链接另一个 Homebrew librime 实例。
+
+### 构建与安装
+
+以下路径是示例，`RIME_SOURCE_DIR` 和 `RIME_BUILD_DIR` 应指向你构建 Squirrel 时使用的 librime。后者必须包含 `src/rime/build_config.h`。`RIME_LIBRARY` 必须是实际加载的内嵌动态库。
+
+```sh
+cmake -S . -B build-squirrel -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_FCITX5=OFF -DBUILD_SQUIRREL=ON \
+  -DRIME_SOURCE_DIR="/path/to/squirrel/librime" \
+  -DRIME_BUILD_DIR="/path/to/squirrel/librime/build" \
+  -DRIME_LIBRARY="/Library/Input Methods/Squirrel.app/Contents/Frameworks/librime.1.dylib" \
+  -DCMAKE_INSTALL_PREFIX="$PWD/stage" \
+  -DSQUIRREL_PLUGIN_DIR=rime-plugins
+cmake --build build-squirrel
+cmake --install build-squirrel
+codesign --force --sign - stage/rime-plugins/librime-rome-ai-predict.dylib
+```
+
+先保存输入并退出 Squirrel，再把 `stage/rime-plugins/` 下的动态库和 `rome-ai-predict.defaults.yaml` 放到该 Squirrel 的 `Contents/Frameworks/rime-plugins/`。插件目录取决于宿主的 librime 构建配置，上述路径适用于标准 Squirrel 布局。没有指定 `SQUIRREL_PLUGIN_DIR` 时，安装会直接指向系统 Squirrel 包内目录，上述示例使用暂存目录以避免自动修改输入法安装。
+
+添加插件会改变 `.app` 包内容。插件自身的签名不保证整个应用包的签名仍有效，需要按你原来的源码构建和签名方式检查、必要时重新签名 Squirrel。更新输入法可能移除额外插件。运行时仍依赖构建时使用的 libcurl、jsoncpp 和 yaml-cpp。
+
+安装不修改用户方案、词库或 API 配置。完成配置后重新启动 Squirrel，必要时注销再登录。不需要维护 Squirrel 的源码分支。
+
+### 配置与启用
+
+在实际的 Rime 用户目录中创建 `rome-ai-predict.yaml`，标准位置为 `~/Library/Rime/rome-ai-predict.yaml`，例如：
+
+```yaml
+enabled: true
+model: "你的服务端模型名"
+# base_url: "http://127.0.0.1:8000/v1"
+# api_key: "你的密钥"
+```
+
+该文件按字段覆盖插件旁的 `rome-ai-predict.defaults.yaml`，字段含义及 API 协议与 Linux 相同。不要把个人密钥写入插件目录的默认文件。无效配置只禁用 AI，不阻止普通 Rime 输入。
+
+在所用方案的 `.custom.yaml` 中合并以下补丁，不要覆盖原有补丁：
+
+```yaml
+patch:
+  "engine/processors/@before 0": rome_ai_predictor
+  "switches/@next":
+    name: rome_ai_predict
+    states: [AI关, AI开]
+    reset: 0
+```
+
+Processor 必须放在其他按键处理器之前。Rime 的普通词库 Translator 和 Filter 无需替换。模块名为 `rome_ai_predict`，动态库文件名必须保留 `librime-rome-ai-predict.dylib`，以匹配 librime 的动态插件加载规则。
+
+在 `squirrel.custom.yaml` 中关闭行内候选预览：
+
+```yaml
+patch:
+  "style/inline_candidate": false
+```
+
+方案级外观设置也不得重新开启 `inline_candidate`。该功能会把候选预览写入编辑器，与“只读取已上屏文字”的约束冲突，本扩展遇到上下文变化会停止联想。普通行内拼音预编辑可以保留，基线在开始组字前获取。
+
+重新部署后，可从 Rime 方案菜单切换“AI关 / AI开”。开关属于当前 Rime 会话，启动状态以 API 配置中的 `enabled` 为准。关闭再开启会重读配置。`Tab`、数字行、小键盘数字或鼠标可接受候选，`Esc` 关闭当前候选，继续输入会取消联想。AI token 直接提交，不经过词库学习或 formatter。
+
+### AX 文本读取与限制
+
+启用 AI 后，首次尝试读取会提示辅助功能授权。请在系统设置的“隐私与安全性 → 辅助功能”中授权 **Squirrel**，不是动态库。重新签名或重新安装输入法后，可能需要重新授权。扩展不安装常驻辅助服务，不监听全局键盘，也不使用剪贴板或上屏历史作为前文。
+
+扩展核对当前输入源、前台应用和聚焦控件，只读取 AX 提供的文本范围。窗口包含选区起点前最多 `2 × context_chars` 个 UTF-16 单元、当前选区及最多 128 个后文单元，实际请求仍按码点限制前文。选区超过 16384 个 UTF-16 单元或回读窗口超过 40000 个单元时不预测。双次文本和选区读取必须一致，窗口边缘的半个代理对不会发送给模型。
+
+上屏前保存的快照只用于计算预期结果，扩展必须在 1 秒内从应用回读确认实际文字和光标后才请求 API。显示和选词前再次同步复核。监测间隔为 50 毫秒，AX 同步 IPC 的单次消息超时设为 50 毫秒。监测无法保证观察到每次短暂变化，AX 也没有原子快照接口。
+
+已知的密码框、系统安全输入状态、无权限、未知文本角色、不完整或不一致的文本范围均不会触发 API 请求。文本框若不正确声明敏感属性，扩展不能替应用识别内容是否敏感。自绘编辑器、部分终端、浏览器控件可能不支持这些 AX 属性，缺少可靠文字时停止联想，不猜测前文。因此这不保证所有应用都可用。
+
+本扩展不记录上下文正文或密钥。可检查 Rime Context 属性 `rome_ai_predict/status`，其中 `surrounding-unavailable` 表示无法取得前文，`waiting-commit` 表示等应用确认，`commit-timeout` 表示确认超时，`generating` / `showing` 表示请求或显示阶段，`configuration-error` / `api-error` 表示配置或请求失败。宿主自己的调试日志设置不受扩展控制。
+
+### 验证范围
+
+Linux 上的隔离测试使用真实 librime 和模拟的文本控件，验证模块注册、上屏时序、候选、选词和生命周期。它们不验证 `src/squirrel/squirrel_host.mm`、macOS 链接与签名、TCC 权限或真实应用的 AX 实现。安装后应先在可提供完整 AX 文本范围的普通编辑器中验证，再扩大应用范围。
+
 ## 共享后端
 
-`rome-ai-backend` 是不依赖 Fcitx5 或 librime 的静态库，包含配置合并与校验、异步 Completions 客户端、UTF-8 校验和上下文快照。Linux 默认构建 Fcitx5 插件，其他平台默认只构建共享后端。目前尚未实现 Squirrel 插件、Accessibility 文本读取或 `_refresh_ui` 接入。
+`rome-ai-backend` 是不依赖 Fcitx5 或 librime 的静态库，包含配置合并与校验、异步 Completions 客户端、UTF-8 校验和上下文快照。Linux 默认构建 Fcitx5 插件，其他平台默认只构建共享后端。Squirrel 扩展需显式设置 `BUILD_SQUIRREL=ON`。
 
 只构建共享后端并运行独立测试：
 
@@ -149,7 +251,20 @@ ctest --test-dir build-test --output-on-failure --parallel 4
 
 启用 `BUILD_FCITX5` 后，还会构建诊断工具 `rome-ai-probe` 和集成测试，不安装诊断工具。集成测试使用临时 HOME/XDG、真实系统 Fcitx5-Rime、隔离码表和本地 HTTP 服务器。所有测试均不访问模型服务、不连接桌面会话、不重启现有输入法、不安装到真实用户和系统目录。
 
-覆盖全局配置、可选用户覆盖、联想生命周期、菜单、API 协议、认证、超时、无效响应、Unicode、候选过滤及真实键码。安装测试验证仅安装三个文件、独立构建、用户安装、`--prefix`、`DESTDIR`、自定义 XDG 数据目录、系统库名加载、不覆盖用户配置，以及移走源码和构建目录后加载插件。
+覆盖全局配置、可选用户覆盖、联想生命周期、菜单、API 协议、认证、超时、无效响应、Unicode、候选过滤及真实键码。Fcitx5 安装测试验证仅安装三个文件、独立构建、用户安装、`--prefix`、`DESTDIR`、自定义 XDG 数据目录、系统库名加载、不覆盖用户配置，以及移走源码和构建目录后加载插件。
+
+另可启用 Squirrel 组件的 librime 隔离测试，需要与系统 librime 匹配的源码头文件及 Boost：
+
+```sh
+cmake -S . -B build-rime-test -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_FCITX5=OFF \
+  -DBUILD_TESTING=ON -DBUILD_RIME_TESTS=ON \
+  -DRIME_SOURCE_DIR=/path/to/matching/librime
+cmake --build build-rime-test
+ctest --test-dir build-rime-test --output-on-failure --parallel 4
+```
+
+这些测试在临时目录加载最小方案和词库，模拟 AX 的正文、选区、焦点及事件循环，不读取真实应用文字。
 
 可选 ASan/UBSan 检查：
 

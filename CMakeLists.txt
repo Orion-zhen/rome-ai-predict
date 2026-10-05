@@ -16,6 +16,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 option(BUILD_FCITX5 "Build and install the Fcitx5 addon" ${ROME_AI_FCITX5_DEFAULT})
 option(BUILD_TESTING "Build tests" OFF)
+option(BUILD_SQUIRREL "Build the macOS librime extension for Squirrel" OFF)
+option(BUILD_RIME_TESTS "Test the Squirrel component using real librime and a simulated text host" OFF)
+if(BUILD_RIME_TESTS AND NOT BUILD_TESTING)
+    message(FATAL_ERROR "BUILD_RIME_TESTS requires BUILD_TESTING=ON")
+endif()
 include(CTest)
 
 find_package(Threads REQUIRED)
@@ -24,17 +29,24 @@ pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 pkg_check_modules(YAML REQUIRED IMPORTED_TARGET yaml-cpp)
 
-add_library(rome-ai-backend STATIC src/settings.cpp src/completion.cpp
-    src/unicode.cpp src/surrounding.cpp)
+add_library(rome-ai-backend STATIC
+    src/shared/settings.cpp
+    src/shared/completion.cpp
+    src/shared/unicode.cpp
+    src/shared/surrounding.cpp)
 set_target_properties(rome-ai-backend PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(rome-ai-backend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(rome-ai-backend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/shared")
 target_link_libraries(rome-ai-backend PUBLIC Threads::Threads
     PkgConfig::CURL PkgConfig::JSONCPP PkgConfig::YAML)
 target_compile_options(rome-ai-backend PRIVATE -Wall -Wextra -Wpedantic)
 
+if(BUILD_SQUIRREL OR BUILD_RIME_TESTS)
+    include(cmake/RimePlugin.cmake)
+endif()
+
 if(BUILD_FCITX5)
     find_package(Fcitx5Core REQUIRED)
-    add_library(rome-ai-predict MODULE src/addon.cpp)
+    add_library(rome-ai-predict MODULE src/fcitx5/addon.cpp)
     target_link_libraries(rome-ai-predict PRIVATE Fcitx5::Core rome-ai-backend)
     target_compile_options(rome-ai-predict PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -64,7 +76,7 @@ if(BUILD_FCITX5)
     if(BUILD_TESTING)
         # 构建目录中的描述文件仅供隔离测试。
         set(ROME_AI_LIBRARY librome-ai-predict)
-        configure_file(src/rome-ai-predict.conf.in
+        configure_file(data/fcitx5/rome-ai-predict.conf.in
             share/fcitx5/addon/rome-ai-predict.conf @ONLY)
         configure_file(data/rome-ai-predict.yaml
             share/fcitx5/conf/rome-ai-predict.yaml COPYONLY)
