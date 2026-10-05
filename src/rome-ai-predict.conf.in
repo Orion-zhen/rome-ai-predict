@@ -1,0 +1,13 @@
+[Addon]
+Name=Rome AI Predict
+Name[zh_CN]=若木 AI 联想
+Comment=Next-token prediction using Completions logprobs
+Comment[zh_CN]=通过 Completions logprobs 预测下一 token，在输入法菜单中启停
+Category=Module
+Library=@ROME_AI_LIBRARY@
+Type=SharedLibrary
+OnDemand=False
+Configurable=False
+
+[Addon/Dependencies]
+0=core

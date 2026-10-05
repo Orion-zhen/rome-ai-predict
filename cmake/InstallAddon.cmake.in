@@ -1,0 +1,17 @@
+set(addon_directory "@ROME_AI_INSTALL_ADDONDIR@")
+set(config_directory "@ROME_AI_INSTALL_PKGDATADIR@/addon")
+foreach(directory addon_directory config_directory)
+    if(NOT IS_ABSOLUTE "${${directory}}")
+        set(${directory} "${CMAKE_INSTALL_PREFIX}/${${directory}}")
+    endif()
+endforeach()
+
+if(@FCITX_INSTALL_USE_FCITX_SYS_PATHS@)
+    set(ROME_AI_LIBRARY librome-ai-predict)
+else()
+    set(ROME_AI_LIBRARY "${addon_directory}/librome-ai-predict")
+endif()
+configure_file("@CMAKE_CURRENT_SOURCE_DIR@/src/rome-ai-predict.conf.in"
+    "@CMAKE_CURRENT_BINARY_DIR@/install-addon/rome-ai-predict.conf" @ONLY)
+file(INSTALL DESTINATION "${config_directory}" TYPE FILE
+    FILES "@CMAKE_CURRENT_BINARY_DIR@/install-addon/rome-ai-predict.conf")

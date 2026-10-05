@@ -1,0 +1,10 @@
+# 全局默认配置：安装到 Fcitx5 数据目录的 conf/rome-ai-predict.yaml。
+# 用户配置只需填写要覆盖的字段。修改后从菜单关闭再开启即可重读。
+enabled: false              # Fcitx5 启动时是否开启
+base_url: "http://127.0.0.1:8000/v1"  # API 根路径，自动追加 /completions
+model: ""                   # 服务端实际模型名，启用前必须填写
+api_key: ""                 # 服务无需认证时留空
+candidates: 5               # 1–9，按下一个位置的 logprob 取前 N 个 token
+temperature: 0.7            # 0–2
+context_chars: 1024         # 1–8192，光标前文的 Unicode 码点数
+timeout_ms: 2000            # 100–30000，单次 HTTP 请求总超时
