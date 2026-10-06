@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include <cmath>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -37,9 +38,13 @@ void apply(Settings &s, const YAML::Node &node) {
 Settings loadSettings(const std::filesystem::path &defaults,
                       const std::optional<std::filesystem::path> &overrides) {
     Settings s;
-    apply(s, YAML::LoadFile(defaults.string()));
+    std::ifstream defaultsFile(defaults);
+    if (!defaultsFile) throw std::runtime_error("cannot open default configuration");
+    apply(s, YAML::Load(defaultsFile));
     if (overrides && std::filesystem::exists(*overrides)) {
-        apply(s, YAML::LoadFile(overrides->string()));
+        std::ifstream overridesFile(*overrides);
+        if (!overridesFile) throw std::runtime_error("cannot open user configuration");
+        apply(s, YAML::Load(overridesFile));
     }
     while (s.baseUrl.ends_with('/')) s.baseUrl.pop_back();
     return s;

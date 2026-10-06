@@ -1,0 +1,13 @@
+{
+  "name": "rome-ai-predict",
+  "version-string": "0.1.0",
+  "builtin-baseline": "13465a7b726f171350defa5368b901a52f7a6af5",
+  "dependencies": ["curl", "jsoncpp", "yaml-cpp"],
+  "overrides": [{"name": "lua", "version": "5.4.8"}],
+  "features": {
+    "weasel": {
+      "description": "Lua 5.4 headers for the official Weasel adapter (runtime supplied by rime.dll)",
+      "dependencies": ["lua"]
+    }
+  }
+}

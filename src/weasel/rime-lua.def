@@ -1,0 +1,21 @@
+LIBRARY rime.dll
+EXPORTS
+    luaL_checklstring
+    luaL_optlstring
+    luaL_error
+    lua_type
+    lua_toboolean
+    luaL_checkversion_
+    luaL_checkinteger
+    luaL_checkudata
+    luaL_newmetatable
+    luaL_setmetatable
+    luaL_setfuncs
+    lua_createtable
+    lua_newuserdatauv
+    lua_pushnil
+    lua_pushstring
+    lua_pushlstring
+    lua_pushcclosure
+    lua_setfield
+    lua_rawseti

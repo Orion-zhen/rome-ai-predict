@@ -2,7 +2,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(test-shared shared/shared.cpp)
 target_link_libraries(test-shared PRIVATE rome-ai-backend)
-target_compile_options(test-shared PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(test-shared PRIVATE ${ROME_AI_WARNINGS})
 add_test(NAME shared-surrounding COMMAND test-shared surrounding)
 add_test(NAME shared-settings COMMAND test-shared settings "${CMAKE_CURRENT_BINARY_DIR}")
 foreach(case llama standard auth bytes dedup filter utf8 length special first-position empty

@@ -1,6 +1,6 @@
 # rome-ai-predict
 
-Rime 的 AI 下一 token 预测扩展。Linux 使用 Fcitx5 插件，macOS 提供不修改 Squirrel 前端的 librime 扩展。Rime 上屏后读取应用提供的光标前文，异步请求支持 `logprobs` 的 Completions API，按概率展示下一个位置的候选。macOS 适配层尚未在 macOS 编译或实机验证，构建和使用条件见下文。
+Rime 的 AI 下一 token 预测扩展。Linux 使用 Fcitx5 插件，macOS 提供 librime 扩展，Windows 使用官方小狼毫的 Lua + DLL 接口；均不修改输入法前端。Rime 上屏后读取应用提供的光标前文，异步请求支持 `logprobs` 的 Completions API，按概率展示下一个位置的候选。macOS 适配层尚未在 macOS 编译或实机验证，构建和使用条件见下文。
 
 ## 目录结构
 
@@ -10,14 +10,16 @@ src/
   fcitx5/       # Linux / Fcitx5 插件
   rime/         # librime 组件、模块注册、宿主接口
   squirrel/     # macOS / Squirrel 的 AX 适配实现
+  weasel/       # Windows / 小狼毫的 Lua、UIA 和 F24 适配
 tests/
   shared/       # 共享后端测试
   fcitx5/       # Fcitx5 集成测试和安装测试
   rime/         # 真实 librime 与模拟文本控件的隔离测试
+  weasel/       # Windows 宿主边界、组字范围和安装加载测试
 tools/          # 开发诊断工具 probe.cpp
 data/
   fcitx5/       # Fcitx5 描述文件模板
-  rome-ai-predict.yaml  # 两个平台共用的默认配置
+  rome-ai-predict.yaml  # 各平台共用的默认配置
 cmake/          # librime 构建配置和 Fcitx5 安装脚本模板
 ```
 
@@ -215,9 +217,58 @@ patch:
 
 Linux 上的隔离测试使用真实 librime 和模拟的文本控件，验证模块注册、上屏时序、候选、选词和生命周期。它们不验证 `src/squirrel/squirrel_host.mm`、macOS 链接与签名、TCC 权限或真实应用的 AX 实现。安装后应先在可提供完整 AX 文本范围的普通编辑器中验证，再扩大应用范围。
 
+## Windows / 小狼毫
+
+`src/weasel/` 复用共享配置、Completions 客户端和候选解析。Lua 处理 Rime 通知与候选，DLL 在 MTA 工作线程读取 UI Automation，通过 F24 唤醒小狼毫。只使用官方 `rime.dll` 导出的 Lua 5.4 C API，不链接第二份 Lua，不依赖 librime 内部 C++ ABI，无辅助进程。
+
+### 构建与安装
+
+要求 Windows x64、Visual Studio 2022 C++ 工具链、Windows SDK、CMake 和近期 vcpkg。当前验证版本为小狼毫 0.17.4 / librime 1.13.1。在 Developer PowerShell 中执行，按实际位置调整路径：
+
+```powershell
+cmake -S . -B build-weasel -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DVCPKG_MANIFEST_FEATURES=weasel `
+  -DBUILD_FCITX5=OFF -DBUILD_WEASEL=ON -DBUILD_TESTING=ON `
+  "-DWEASEL_RIME_DLL=C:/Program Files/Rime/weasel-0.17.4/rime.dll"
+cmake --build build-weasel --config Release --parallel
+ctest --test-dir build-weasel -C Release --output-on-failure
+```
+
+`WEASEL_RIME_DLL` 仅用于安装加载测试。安装前退出小狼毫，并将前缀设为实际 Rime 用户目录：
+
+```powershell
+cmake --install build-weasel --config Release --prefix "$env:APPDATA/Rime"
+```
+
+只安装 `lua/rome_ai_predict.lua`、`lua/rome_ai_predict_native.lua`、`rome-ai-predict/rome-ai-predict-weasel.dll` 和 `rome-ai-predict/rome-ai-predict.defaults.yaml`。不会替换官方 DLL、修改方案、词库、皮肤或用户配置，也不会自动重启、部署。
+
+在用户目录的 `rome-ai-predict.yaml` 中填写现有配置字段：`enabled`、`base_url`、`model` 等；默认关闭，模型必须支持前述 Top-K 概率接口。将以下补丁合并进所用方案的 `.custom.yaml`，保留原有补丁，再手动重新部署：
+
+```yaml
+patch:
+  "engine/processors/@before 0": lua_processor@*rome_ai_predict
+  "switches/@next":
+    name: rome_ai_predict
+    reset: 0
+    states: [AI关, AI开]
+```
+
+启动开关在方案初始化后的首次按键应用；切换 AI 开关会重读配置。Tab 选首项、数字键选对应项、Esc 取消；继续输入或文本、选区、目标变化会使旧结果失效。启用时保留 F24 用于唤醒。停用时移除上述方案补丁并重新部署；退出小狼毫后可删除四个安装文件，用户配置自行保留。
+
+### 支持边界与验证
+
+- 只接入 TSF 会话。前台进程必须匹配小狼毫的 `client_app`，焦点、键盘布局和 UIA 元素身份须保持一致。密码、只读控件及缺少可靠文本或选区的控件不预测。当前文档上限为 40000 个 UTF-16 单元。
+- 组字状态来自 Rime，UIA 负责核对实际正文和选区。不要求 UIA 组字范围在提交后消失，普通回读也不要求 TextEditPattern。Rime 仍在组字时，即使正文与预期相同也不请求模型。
+- 空闲期间预采集真实基线，在开始输入时冻结。跨越输入边界的晚到读取不作为基线。首次输入尚无缓存时，仅在 Rime 正在组字且 UIA 提供稳定范围提示时投影预编辑。提示缺失或无法确认则跳过该轮，不猜测空格、不阻塞普通输入。范围提示也只可用于当前插件拥有的 AI 菜单投影。
+- 提交通知后须在 1 秒内核对正文、光标和控件身份。这不是应用级原子提交回执。Lua 提交通知不是最终 formatter 输出，若其改写上屏内容，将因正文核对失败而放弃。不支持绕过通知直接上屏的标点预测。
+- UIA 调用设有 500 ms 超时，但不能保证第三方 provider 总能及时退出。焦点检查与 SendInput、正文核对与提交均非原子操作；共用同一键盘布局的不同 TSF 输入源也不能仅靠布局值完全区分。
+- 自动测试验证共享后端、组字投影、无绑定目标的拒绝，以及实际 Session 配合内存控件和本地 HTTP 的基线、组字状态、过期结果与连续选词。临时安装测试使用官方 librime 验证方案部署、Lua/DLL 加载、Rime 组字通知、配置开关和中文输入，不连接桌面输入法。已测空格和中文安装路径，当前独立宿主 ACP 不能表示的 Emoji 路径不算通过。
+- 先前专用窗口已人工验证预测、展示、选词及连续预测；本次通用 Windows 目标适配尚未完成日常应用实机验收，不能视为所有应用都支持。
+
 ## 共享后端
 
-`rome-ai-backend` 是不依赖 Fcitx5 或 librime 的静态库，包含配置合并与校验、异步 Completions 客户端、UTF-8 校验和上下文快照。Linux 默认构建 Fcitx5 插件，其他平台默认只构建共享后端。Squirrel 扩展需显式设置 `BUILD_SQUIRREL=ON`。
+`rome-ai-backend` 是不依赖 Fcitx5 或 librime 的静态库，包含配置合并与校验、异步 Completions 客户端、UTF-8 校验和上下文快照。Linux 默认构建 Fcitx5 插件，其他平台默认只构建共享后端。Squirrel 和小狼毫适配分别需显式设置 `BUILD_SQUIRREL=ON`、`BUILD_WEASEL=ON`。
 
 只构建共享后端并运行独立测试：
 
