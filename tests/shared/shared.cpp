@@ -79,8 +79,8 @@ void surroundingTest() {
 }
 
 void settingsTest(const std::filesystem::path &work) {
-    const auto directory = work / ("settings-" + std::to_string(
-        std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto directory = work / std::filesystem::path(u8"settings-中文-😀-");
+    directory += std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::create_directory(directory);
     struct Cleanup {
         std::filesystem::path path;

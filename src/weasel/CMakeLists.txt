@@ -1,0 +1,28 @@
+if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "The Weasel adapter requires Windows x64 and MSVC")
+endif()
+find_package(Lua 5.4 EXACT REQUIRED)
+set(WEASEL_RIME_DLL "" CACHE FILEPATH "Official x64 Weasel rime.dll for isolated tests")
+set(host_import "${CMAKE_CURRENT_BINARY_DIR}/rime-lua.lib")
+add_custom_command(OUTPUT "${host_import}"
+    COMMAND "${CMAKE_AR}" /nologo /machine:x64 /def:${CMAKE_CURRENT_SOURCE_DIR}/rime-lua.def /out:${host_import}
+    DEPENDS rime-lua.def VERBATIM)
+add_library(rome-weasel-runtime STATIC session.cpp text_host.cpp windows_host.cpp)
+target_include_directories(rome-weasel-runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(rome-weasel-runtime PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(rome-weasel-runtime PRIVATE ${ROME_AI_WARNINGS})
+target_link_libraries(rome-weasel-runtime PUBLIC rome-ai-backend ole32 oleaut32 uiautomationcore)
+add_library(rome-ai-weasel MODULE plugin.cpp "${host_import}")
+target_include_directories(rome-ai-weasel PRIVATE "${LUA_INCLUDE_DIR}")
+target_compile_definitions(rome-ai-weasel PRIVATE LUA_BUILD_AS_DLL)
+target_link_libraries(rome-ai-weasel PRIVATE rome-weasel-runtime "${host_import}")
+target_compile_options(rome-ai-weasel PRIVATE ${ROME_AI_WARNINGS})
+set_target_properties(rome-ai-weasel PROPERTIES PREFIX "" OUTPUT_NAME "rome-ai-predict-weasel")
+# 安装前缀是 Rime 用户目录或暂存目录，不改方案、用户 API 配置或官方小狼毫。
+install(TARGETS rome-ai-weasel RUNTIME DESTINATION rome-ai-predict LIBRARY DESTINATION rome-ai-predict)
+install(FILES "${PROJECT_SOURCE_DIR}/data/rome-ai-predict.yaml" DESTINATION rome-ai-predict
+    RENAME rome-ai-predict.defaults.yaml)
+install(FILES rome_ai_predict.lua rome_ai_predict_native.lua DESTINATION lua)
+if(BUILD_TESTING)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/tests/weasel" "${CMAKE_CURRENT_BINARY_DIR}/tests")
+endif()
